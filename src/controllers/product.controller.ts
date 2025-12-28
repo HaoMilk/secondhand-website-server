@@ -206,6 +206,63 @@ export const productController = {
         message
       });
     }
+  },
+
+  /**
+   * GET /api/products/:id
+   * Lấy chi tiết sản phẩm theo ID (public)
+   * Chỉ trả về sản phẩm đã được duyệt và có sẵn
+   */
+  async getProductById(req: any, res: Response) {
+    try {
+      const productId = req.params.id;
+
+      if (!productId) {
+        return res.status(400).json({
+          code: ProductErrorCodes.VALIDATION_ERROR,
+          message: "Product ID is required"
+        });
+      }
+
+      const product = await productService.getProductById(productId);
+
+      // Format response
+      return res.status(200).json({
+        id: product._id,
+        title: product.title,
+        description: product.description,
+        categoryId: product.categoryId?._id || product.categoryId,
+        categoryName: product.categoryId?.name,
+        brand: product.brand,
+        size: product.size,
+        color: product.color,
+        material: product.material,
+        gender: product.gender,
+        style: product.style,
+        price: product.price,
+        condition: product.condition,
+        defects: product.defects,
+        defectImages: product.defectImages,
+        images: product.images,
+        quantity: product.quantity,
+        sellerId: product.sellerId?._id || product.sellerId,
+        sellerEmail: product.sellerId?.email,
+        authenticity: product.authenticity,
+        status: product.status,
+        isAvailable: product.isAvailable,
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt
+      });
+    } catch (error: any) {
+      const statusCode = error.statusCode || 500;
+      const code = error.code || "SYSTEM_ERROR";
+      const message = error.message || "Internal Server Error";
+
+      return res.status(statusCode).json({
+        code,
+        message
+      });
+    }
   }
 };
 

@@ -33,6 +33,16 @@ productRouter.get(
 );
 
 /**
+ * GET /api/products/:id
+ * Lấy chi tiết sản phẩm theo ID (public)
+ * Chỉ trả về sản phẩm đã được duyệt và có sẵn
+ */
+productRouter.get(
+  "/:id",
+  productController.getProductById.bind(productController)
+);
+
+/**
  * GET /api/products/my-products
  * Lấy danh sách sản phẩm của user hiện tại
  * 

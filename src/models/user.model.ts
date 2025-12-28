@@ -1,76 +1,84 @@
 import mongoose, { Schema } from "mongoose";
+import { profileSchema } from "./profile.schema.js";
+import { sellerInfoSchema } from "./seller-info.schema.js";
 
 export type UserRole = "admin" | "user";
 
-// Schema cho địa chỉ giao hàng
-const shippingAddressSchema = new Schema(
-  {
-    fullName: { type: String, required: true },
-    phone: { type: String, required: true },
-    province: { type: String, required: true },
-    district: { type: String, required: true },
-    ward: { type: String, required: true },
-    street: { type: String },
-    note: { type: String },
-    isDefault: { type: Boolean, default: false }
-  },
-  { _id: true, timestamps: true }
-);
+/**
+ * User Interface
+ */
+export interface IUser {
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  isLocked: boolean;
+  profile?: {
+    fullName?: string;
+    phone?: string;
+    phoneVerified?: boolean;
+    emailVerified?: boolean;
+    avatar?: string;
+    address?: {
+      province?: string;
+      district?: string;
+      ward?: string;
+      street?: string;
+    };
+  };
+  sellerInfo?: {
+    shopName?: string;
+    tradingArea?: string;
+    contactMethods?: {
+      internalChat?: boolean;
+      phone?: boolean;
+      showPhone?: boolean;
+    };
+    paymentMethods?: {
+      eWallet?: boolean;
+      bankTransfer?: boolean;
+      bankAccount?: string;
+    };
+    agreements?: {
+      termsAccepted?: boolean;
+      noProhibitedItems?: boolean;
+    };
+  };
+  createdAt?: Date;
+  updatedAt?: Date;
+}
 
-// Schema cho thông tin người bán
-const sellerInfoSchema = new Schema(
+/**
+ * User Schema
+ */
+const userSchema = new Schema<IUser>(
   {
-    shopName: { type: String },
-    tradingArea: { type: String },
-    contactMethods: {
-      internalChat: { type: Boolean, default: true },
-      phone: { type: Boolean, default: false },
-      showPhone: { type: Boolean, default: false }
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      lowercase: true,
+      index: true
     },
-    paymentMethods: {
-      eWallet: { type: Boolean, default: false },
-      bankTransfer: { type: Boolean, default: false },
-      bankAccount: { type: String }
-    },
-    agreements: {
-      termsAccepted: { type: Boolean, default: false },
-      noProhibitedItems: { type: Boolean, default: false }
-    }
-  },
-  { _id: false }
-);
-
-const userSchema = new Schema(
-  {
-    email: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
-    role: { 
-      type: String, 
-      enum: ["admin", "user"], 
+    role: {
+      type: String,
+      enum: ["admin", "user"],
       default: "user",
-      required: true 
+      required: true,
+      index: true
     },
     isLocked: { type: Boolean, default: false },
-    // Thông tin cá nhân (bắt buộc)
-    profile: {
-      fullName: { type: String },
-      phone: { type: String },
-      phoneVerified: { type: Boolean, default: false },
-      emailVerified: { type: Boolean, default: false },
-      avatar: { type: String },
-      address: {
-        province: { type: String },
-        district: { type: String },
-        ward: { type: String },
-        street: { type: String }
-      }
-    },
-    // Địa chỉ giao hàng (nhiều địa chỉ)
-    shippingAddresses: [shippingAddressSchema],
-    // Thông tin người bán
+    // Thông tin cá nhân (subdocument)
+    profile: profileSchema,
+    // Thông tin người bán (subdocument)
     sellerInfo: sellerInfoSchema
   },
   { timestamps: true }
 );
 
-export const UserModel = mongoose.model("User", userSchema);
+// Indexes để tối ưu query
+userSchema.index({ email: 1 });
+userSchema.index({ role: 1 });
+
+export const UserModel = mongoose.model<IUser>("User", userSchema);

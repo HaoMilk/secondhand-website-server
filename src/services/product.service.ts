@@ -123,6 +123,31 @@ export const productService = {
   async getAllProducts(page: number = 1, limit: number = 9) {
     const result = await productRepository.findAllPaginated(page, limit);
     return result;
+  },
+
+  /**
+   * Lấy chi tiết sản phẩm theo ID (public)
+   * Chỉ trả về sản phẩm đã được duyệt và có sẵn
+   */
+  async getProductById(id: string) {
+    const product = await productRepository.findById(id);
+    
+    if (!product) {
+      const error = new Error("Product not found");
+      (error as any).statusCode = 404;
+      (error as any).code = ProductErrorCodes.VALIDATION_ERROR;
+      throw error;
+    }
+
+    // Chỉ cho phép xem sản phẩm đã được duyệt và có sẵn
+    if (product.status !== "approved" || !product.isAvailable) {
+      const error = new Error("Product not available");
+      (error as any).statusCode = 404;
+      (error as any).code = ProductErrorCodes.VALIDATION_ERROR;
+      throw error;
+    }
+
+    return product;
   }
 };
 
