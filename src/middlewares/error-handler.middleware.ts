@@ -6,8 +6,16 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ) {
-  res.status(err.statusCode || 500).json({
+  const response: any = {
+    success: false,
     code: err.code || "SYSTEM_ERROR",
     message: err.message || "Internal Server Error"
-  });
+  };
+
+  // Thêm details nếu có (cho validation errors)
+  if (err.details) {
+    response.details = err.details;
+  }
+
+  res.status(err.statusCode || 500).json(response);
 }

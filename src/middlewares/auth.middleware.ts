@@ -18,6 +18,7 @@ export async function authenticate(
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
+        success: false,
         code: "AUTH_REQUIRED",
         message: "Authentication required"
       });
@@ -29,6 +30,7 @@ export async function authenticate(
     const user = await userRepository.findById(decoded.sub);
     if (!user) {
       return res.status(401).json({
+        success: false,
         code: "AUTH_INVALID_TOKEN",
         message: "Invalid token"
       });
@@ -39,6 +41,7 @@ export async function authenticate(
     next();
   } catch (err) {
     return res.status(401).json({
+      success: false,
       code: "AUTH_INVALID_TOKEN",
       message: "Invalid or expired token"
     });
@@ -49,6 +52,7 @@ export function authorize(...roles: UserRole[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.userRole) {
       return res.status(401).json({
+        success: false,
         code: "AUTH_REQUIRED",
         message: "Authentication required"
       });
@@ -56,6 +60,7 @@ export function authorize(...roles: UserRole[]) {
 
     if (!roles.includes(req.userRole)) {
       return res.status(403).json({
+        success: false,
         code: "AUTH_FORBIDDEN",
         message: "Insufficient permissions"
       });
