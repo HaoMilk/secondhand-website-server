@@ -13,7 +13,9 @@ export const productRepository = {
    * Tìm sản phẩm theo ID
    */
   async findById(id: string) {
-    return ProductModel.findById(id).populate("sellerId", "email role");
+    return ProductModel.findById(id)
+      .populate("sellerId", "email role")
+      .populate("categoryId", "name");
   },
 
   /**
