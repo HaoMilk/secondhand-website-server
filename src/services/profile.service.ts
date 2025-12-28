@@ -1,5 +1,7 @@
 import { userRepository } from "../repositories/user.repository.js";
+import { shippingAddressRepository } from "../repositories/shipping-address.repository.js";
 import { logger } from "../utils/logger.js";
+import mongoose from "mongoose";
 
 /**
  * Error codes cho Profile module
@@ -80,9 +82,9 @@ function isBasicProfileComplete(profile: any): boolean {
 /**
  * Kiểm tra có địa chỉ giao hàng mặc định chưa
  */
-function hasDefaultShippingAddress(shippingAddresses: any[]): boolean {
-  if (!shippingAddresses || shippingAddresses.length === 0) return false;
-  return shippingAddresses.some(addr => addr.isDefault === true);
+async function hasDefaultShippingAddress(userId: string): Promise<boolean> {
+  const defaultAddress = await shippingAddressRepository.findDefaultByUserId(userId);
+  return !!defaultAddress;
 }
 
 /**
@@ -102,10 +104,10 @@ function isSellerInfoComplete(sellerInfo: any): boolean {
 /**
  * Tính % hoàn thiện hồ sơ
  */
-function calculateProfileCompletion(user: any): {
+async function calculateProfileCompletion(user: any, shippingAddresses: any[]): Promise<{
   percentage: number;
   missingFields: string[];
-} {
+}> {
   const missingFields: string[] = [];
   let completedFields = 0;
   const totalFields = 7; // Tổng số trường cần thiết
@@ -130,7 +132,8 @@ function calculateProfileCompletion(user: any): {
   else completedFields++;
 
   // Địa chỉ giao hàng mặc định
-  if (!hasDefaultShippingAddress(user.shippingAddresses)) {
+  const hasDefault = shippingAddresses.some(addr => addr.isDefault === true);
+  if (!hasDefault) {
     missingFields.push("Địa chỉ giao hàng mặc định");
   } else {
     completedFields++;
@@ -157,11 +160,26 @@ export const profileService = {
       throw error;
     }
 
-    const completion = calculateProfileCompletion(user);
+    // Lấy địa chỉ giao hàng từ collection riêng
+    const shippingAddresses = await shippingAddressRepository.findByUserId(userId);
+    
+    const completion = await calculateProfileCompletion(user, shippingAddresses);
 
     return {
       profile: user.profile || {},
-      shippingAddresses: user.shippingAddresses || [],
+      shippingAddresses: shippingAddresses.map(addr => ({
+        _id: addr._id.toString(),
+        fullName: addr.fullName,
+        phone: addr.phone,
+        province: addr.province,
+        district: addr.district,
+        ward: addr.ward,
+        street: addr.street,
+        note: addr.note,
+        isDefault: addr.isDefault,
+        isDefaultShipping: addr.isDefault,
+        isDefaultPickup: addr.isDefaultPickup || false
+      })),
       sellerInfo: user.sellerInfo || {},
       completion
     };
@@ -180,12 +198,34 @@ export const profileService = {
     }
 
     // Validate
-    if (!data.fullName || !data.phone || !data.address?.province || 
-        !data.address?.district || !data.address?.ward) {
-      const error = new Error("Missing required fields");
+    if (!data.fullName || !data.phone) {
+      const error = new Error("Missing required fields: fullName and phone are required");
       (error as any).statusCode = 400;
       (error as any).code = ProfileErrorCodes.VALIDATION_ERROR;
       throw error;
+    }
+
+    // Nếu không có địa chỉ trong request, thử lấy từ địa chỉ giao hàng mặc định
+    let addressData = data.address;
+    if (!addressData || !addressData.province || !addressData.district || !addressData.ward) {
+      const defaultShippingAddress = await shippingAddressRepository.findDefaultByUserId(userId);
+      if (defaultShippingAddress) {
+        addressData = {
+          province: defaultShippingAddress.province,
+          district: defaultShippingAddress.district,
+          ward: defaultShippingAddress.ward,
+          street: defaultShippingAddress.street
+        };
+        logger.info(`Using default shipping address for profile.address for user ${userId}`);
+      } else if (user.profile?.address) {
+        // Giữ nguyên địa chỉ cũ nếu có
+        addressData = {
+          province: user.profile.address.province,
+          district: user.profile.address.district,
+          ward: user.profile.address.ward,
+          street: user.profile.address.street
+        };
+      }
     }
 
     // Cập nhật profile
@@ -195,12 +235,12 @@ export const profileService = {
       phoneVerified: user.profile?.phoneVerified || false,
       emailVerified: user.profile?.emailVerified || false,
       avatar: data.avatar || user.profile?.avatar,
-      address: {
-        province: data.address.province,
-        district: data.address.district,
-        ward: data.address.ward,
-        street: data.address.street || user.profile?.address?.street
-      }
+      address: addressData ? {
+        province: addressData.province,
+        district: addressData.district,
+        ward: addressData.ward,
+        street: addressData.street || user.profile?.address?.street
+      } : user.profile?.address
     };
 
     await user.save();
@@ -230,21 +270,24 @@ export const profileService = {
       throw error;
     }
 
-    // Nếu đặt làm mặc định, bỏ mặc định của các địa chỉ khác
-    if (data.isDefault) {
-      if (user.shippingAddresses) {
-        user.shippingAddresses.forEach(addr => {
-          addr.isDefault = false;
-        });
-      }
+    // Kiểm tra xem có địa chỉ nào chưa
+    const existingAddresses = await shippingAddressRepository.findByUserId(userId);
+    const isFirstAddress = existingAddresses.length === 0;
+    const isDefaultPickup = (data as any).isDefaultPickup || false;
+
+    // Nếu đặt làm mặc định giao hàng, bỏ mặc định của các địa chỉ khác
+    if (data.isDefault || isFirstAddress) {
+      await shippingAddressRepository.unsetDefaultByUserId(userId);
     }
 
-    // Thêm địa chỉ mới
-    if (!user.shippingAddresses) {
-      user.shippingAddresses = [];
+    // Nếu đặt làm mặc định lấy hàng, bỏ mặc định của các địa chỉ khác
+    if (isDefaultPickup) {
+      await shippingAddressRepository.unsetDefaultPickupByUserId(userId);
     }
 
-    const newAddress = {
+    // Tạo địa chỉ mới
+    const newAddress = await shippingAddressRepository.create({
+      userId: new mongoose.Types.ObjectId(userId),
       fullName: data.fullName,
       phone: data.phone,
       province: data.province,
@@ -252,14 +295,24 @@ export const profileService = {
       ward: data.ward,
       street: data.street,
       note: data.note,
-      isDefault: data.isDefault || (user.shippingAddresses.length === 0)
-    };
-
-    user.shippingAddresses.push(newAddress as any);
-    await user.save();
+      isDefault: data.isDefault !== undefined ? data.isDefault : isFirstAddress,
+      isDefaultPickup: (data as any).isDefaultPickup || false
+    });
 
     logger.info(`Shipping address added for user ${userId}`);
-    return newAddress;
+    return {
+      _id: newAddress._id.toString(),
+      fullName: newAddress.fullName,
+      phone: newAddress.phone,
+      province: newAddress.province,
+      district: newAddress.district,
+      ward: newAddress.ward,
+      street: newAddress.street,
+      note: newAddress.note,
+      isDefault: newAddress.isDefault,
+      isDefaultShipping: newAddress.isDefault,
+      isDefaultPickup: newAddress.isDefaultPickup || false
+    };
   },
 
   /**
@@ -270,15 +323,8 @@ export const profileService = {
     addressId: string, 
     data: Partial<ShippingAddressInput>
   ) {
-    const user = await userRepository.findById(userId);
-    if (!user) {
-      const error = new Error("User not found");
-      (error as any).statusCode = 404;
-      (error as any).code = ProfileErrorCodes.USER_NOT_FOUND;
-      throw error;
-    }
-
-    const address = user.shippingAddresses?.id(addressId);
+    // Kiểm tra địa chỉ thuộc về user
+    const address = await shippingAddressRepository.findByIdAndUserId(addressId, userId);
     if (!address) {
       const error = new Error("Shipping address not found");
       (error as any).statusCode = 404;
@@ -286,44 +332,58 @@ export const profileService = {
       throw error;
     }
 
-    // Cập nhật các trường
-    if (data.fullName) address.fullName = data.fullName;
-    if (data.phone) address.phone = data.phone;
-    if (data.province) address.province = data.province;
-    if (data.district) address.district = data.district;
-    if (data.ward) address.ward = data.ward;
-    if (data.street !== undefined) address.street = data.street;
-    if (data.note !== undefined) address.note = data.note;
-
-    // Nếu đặt làm mặc định, bỏ mặc định của các địa chỉ khác
+    // Nếu đặt làm mặc định giao hàng, bỏ mặc định của các địa chỉ khác
     if (data.isDefault === true) {
-      user.shippingAddresses?.forEach(addr => {
-        if (addr._id.toString() !== addressId) {
-          addr.isDefault = false;
-        }
-      });
-      address.isDefault = true;
+      await shippingAddressRepository.unsetDefaultByUserId(userId);
     }
 
-    await user.save();
+    // Nếu đặt làm mặc định lấy hàng, bỏ mặc định của các địa chỉ khác
+    if ((data as any).isDefaultPickup === true) {
+      await shippingAddressRepository.unsetDefaultPickupByUserId(userId);
+    }
+
+    // Cập nhật các trường
+    const updateData: any = {};
+    if (data.fullName !== undefined) updateData.fullName = data.fullName;
+    if (data.phone !== undefined) updateData.phone = data.phone;
+    if (data.province !== undefined) updateData.province = data.province;
+    if (data.district !== undefined) updateData.district = data.district;
+    if (data.ward !== undefined) updateData.ward = data.ward;
+    if (data.street !== undefined) updateData.street = data.street;
+    if (data.note !== undefined) updateData.note = data.note;
+    if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
+    if ((data as any).isDefaultPickup !== undefined) updateData.isDefaultPickup = (data as any).isDefaultPickup;
+
+    const updatedAddress = await shippingAddressRepository.updateById(addressId, updateData);
+    if (!updatedAddress) {
+      const error = new Error("Failed to update shipping address");
+      (error as any).statusCode = 500;
+      (error as any).code = ProfileErrorCodes.VALIDATION_ERROR;
+      throw error;
+    }
 
     logger.info(`Shipping address updated for user ${userId}`);
-    return address;
+    return {
+      _id: updatedAddress._id.toString(),
+      fullName: updatedAddress.fullName,
+      phone: updatedAddress.phone,
+      province: updatedAddress.province,
+      district: updatedAddress.district,
+      ward: updatedAddress.ward,
+      street: updatedAddress.street,
+      note: updatedAddress.note,
+      isDefault: updatedAddress.isDefault,
+      isDefaultShipping: updatedAddress.isDefault,
+      isDefaultPickup: updatedAddress.isDefaultPickup || false
+    };
   },
 
   /**
    * Xóa địa chỉ giao hàng
    */
   async deleteShippingAddress(userId: string, addressId: string) {
-    const user = await userRepository.findById(userId);
-    if (!user) {
-      const error = new Error("User not found");
-      (error as any).statusCode = 404;
-      (error as any).code = ProfileErrorCodes.USER_NOT_FOUND;
-      throw error;
-    }
-
-    const address = user.shippingAddresses?.id(addressId);
+    // Kiểm tra địa chỉ thuộc về user
+    const address = await shippingAddressRepository.findByIdAndUserId(addressId, userId);
     if (!address) {
       const error = new Error("Shipping address not found");
       (error as any).statusCode = 404;
@@ -331,8 +391,7 @@ export const profileService = {
       throw error;
     }
 
-    address.deleteOne();
-    await user.save();
+    await shippingAddressRepository.deleteById(addressId);
 
     logger.info(`Shipping address deleted for user ${userId}`);
     return { success: true };
@@ -441,7 +500,8 @@ export const profileService = {
       };
     }
 
-    if (!hasDefaultShippingAddress(user.shippingAddresses || [])) {
+    const hasDefault = await hasDefaultShippingAddress(userId);
+    if (!hasDefault) {
       return { 
         canBuy: false, 
         reason: "PROFILE_INCOMPLETE",
@@ -455,6 +515,13 @@ export const profileService = {
   /**
    * Tính % hoàn thiện hồ sơ
    */
-  calculateProfileCompletion
+  async calculateProfileCompletion(userId: string) {
+    const user = await userRepository.findById(userId);
+    if (!user) {
+      return { percentage: 0, missingFields: ["User not found"] };
+    }
+    const shippingAddresses = await shippingAddressRepository.findByUserId(userId);
+    return await calculateProfileCompletion(user, shippingAddresses);
+  }
 };
 
