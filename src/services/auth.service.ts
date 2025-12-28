@@ -2,9 +2,10 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { userRepository } from "../repositories/user.repository.js";
 import { env } from "../config/env.js";
+import type { UserRole } from "../models/user.model.js";
 
 export const authService = {
-  async register(email: string, password: string) {
+  async register(email: string, password: string, role?: UserRole) {
     const existing = await userRepository.findByEmail(email);
     if (existing) {
       throw Object.assign(new Error("Email already exists"), {
@@ -14,9 +15,9 @@ export const authService = {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await userRepository.create({ email, passwordHash });
+    const user = await userRepository.create({ email, passwordHash, role });
 
-    return { id: user._id, email: user.email };
+    return { id: user._id, email: user.email, role: user.role };
   },
 
   async login(email: string, password: string) {
@@ -36,10 +37,10 @@ export const authService = {
       });
     }
 
-    const token = jwt.sign({ sub: user._id }, env.JWT_SECRET, {
+    const token = jwt.sign({ sub: user._id, role: user.role }, env.JWT_SECRET, {
       expiresIn: "1h"
     });
 
-    return { accessToken: token };
+    return { accessToken: token, role: user.role, email: user.email };
   }
 };
